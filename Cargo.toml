@@ -1,0 +1,26 @@
+[package]
+name = "wechat_multi_client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8.19"
+tray-item = "0.10.0"
+winit = "0.30.5"
+log="*"
+
+
+[profile.release]
+panic = "abort"
+
+
+[[bin]]
+name = "wechat_multi_client"
+path = "src/main.rs"
+required-features = []
+# 关键配置，将子系统设置为 "windows"，即 GUI 模式
+windows_subsystem = "windows"
+
+[build-dependencies]
+embed-resource = "2.3"

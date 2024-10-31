@@ -1,0 +1,4 @@
+# config.toml
+instance_count = 2
+wechat_path = "C:/Program Files/Tencent/WeChat/WeChat.exe"
+data_dir_prefix = "C:/Users/86923/AppData/Roaming/WeChatInstance"
