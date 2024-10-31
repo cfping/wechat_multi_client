@@ -1,10 +1,9 @@
-use std::{env, fs, process, sync::{Arc, Mutex}};
-use std::process::{Command, Stdio, Child};
 use serde::Deserialize;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use std::{env, fs, process, thread};
 use tray_item::TrayItem;
-use winit::{
-    application::ApplicationHandler, event::WindowEvent, event_loop::{ControlFlow, EventLoop}, window::{Window, WindowAttributes, WindowId}
-};
 
 // 配置结构体
 #[derive(Deserialize, Clone)]
@@ -36,13 +35,16 @@ fn load_config() -> Config {
     }
 }
 
-// 启动 WeChat 实例
 fn start_wechat_instance(instance_id: u32, config: &Config) -> Option<Child> {
     let data_dir = match &config.data_dir_prefix {
         Some(prefix) => format!("{}{}", prefix, instance_id),
         None => {
-            let user_profile = env::var("USERPROFILE").unwrap_or_else(|_| "C:/Users/Default".to_string());
-            format!("{}/AppData/Roaming/WeChatInstance{}", user_profile, instance_id)
+            let user_profile =
+                env::var("USERPROFILE").unwrap_or_else(|_| "C:/Users/Default".to_string());
+            format!(
+                "{}/AppData/Roaming/WeChatInstance{}",
+                user_profile, instance_id
+            )
         }
     };
 
@@ -51,63 +53,41 @@ fn start_wechat_instance(instance_id: u32, config: &Config) -> Option<Child> {
         return None;
     }
 
+    // 启动微信实例
     let child = Command::new(&config.wechat_path)
+        // .arg(&data_dir)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .expect("Failed to start WeChat instance");
 
-    println!("Started WeChat instance {} with PID: {}", instance_id, child.id());
+    println!(
+        "Started WeChat instance {} with PID: {}",
+        instance_id,
+        child.id()
+    );
     Some(child)
-}
-
-// 应用程序结构体，管理托盘和窗口事件
-struct App {
-    window_id: Option<WindowId>,
-    instances: Arc<Mutex<Vec<Child>>>,
-    window :Option<Window>
-}
-
-impl App {
-    fn new(instances: Arc<Mutex<Vec<Child>>>) -> Self {
-        Self { window_id:None, instances,window:None }
-    }
-}
-impl  ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        // let window_attributes = Window::default_attributes().with_title("A fantastic window!");
-        
-        // self.window = Some(event_loop.create_window(window_attributes).unwrap());
-       
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
-        window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::CloseRequested => {
-                log::info!("Closing Window={window_id:?}");
-                event_loop.set_control_flow(ControlFlow::Wait);
-            },
-            _=>{
-                log::warn!("Closing Window={window_id:?}");
-            }
-        }
-      
-    }
 }
 
 fn main() {
     let config = load_config();
-    let instances = Arc::new(Mutex::new(Vec::new()));
-    let mut tray = TrayItem::new("WeChat Manager", tray_item::IconSource::Resource("aa-exe-icon")).unwrap();
+    let instances = Arc::new(Mutex::new(Vec::new())); // 用于记录启动的实例进程
+    let mut tray = TrayItem::new(
+        "WeChat Manager",
+        tray_item::IconSource::Resource("aa-exe-icon"),
+    )
+    .unwrap();
 
     let instances_clone = Arc::clone(&instances);
     let config_clone = config.clone();
+    for i in 1..=config.instance_count {
+        let config = config.clone();
+        if let Some(child) = start_wechat_instance(i, &config) {
+            instances_clone.lock().unwrap().push(child);
+        }
+    }
 
+    // 添加新开 WeChat 实例的菜单项
     tray.add_menu_item("Open New WeChat Instance", move || {
         let instance_id = {
             let mut instances = instances_clone.lock().unwrap();
@@ -116,16 +96,22 @@ fn main() {
         if let Some(child) = start_wechat_instance(instance_id, &config_clone) {
             instances_clone.lock().unwrap().push(child);
         }
-    }).unwrap();
+    })
+    .unwrap();
 
+    // 添加关闭所有 WeChat 实例的菜单项
     let instances_clone = Arc::clone(&instances);
     tray.add_menu_item("Close All WeChat Instances", move || {
         let mut instances = instances_clone.lock().unwrap();
         while let Some(mut instance) = instances.pop() {
-            let _ = instance.kill();
+            if let Err(e) = instance.kill() {
+                eprintln!("Failed to close WeChat instance: {}", e);
+            }
         }
-    }).unwrap();
+    })
+    .unwrap();
 
+    // 添加退出程序的菜单项
     let instances_clone = Arc::clone(&instances);
     tray.add_menu_item("Exit", move || {
         let mut instances = instances_clone.lock().unwrap();
@@ -133,17 +119,11 @@ fn main() {
             let _ = instance.kill();
         }
         process::exit(0);
-    }).unwrap();
+    })
+    .unwrap();
 
-    // 创建事件循环和窗口
-    let event_loop = EventLoop::new().unwrap();
-    // let window_attributes = WindowAttributes::default().with_title(
-    //     "Press 1, 2, 3 to change control flow mode. Press R to toggle redraw requests.",
-    // );
-    // let window =event_loop.create_window(window_attributes).unwrap();
-    // let window_id = window.id();
-
-    // 创建应用实例并启动事件循环
-    let mut app = App::new(instances.clone());
-    let _ = event_loop.run_app(&mut app);
+    // 主线程延时循环，保持托盘图标常驻
+    loop {
+        thread::sleep(Duration::from_secs(60));
+    }
 }
